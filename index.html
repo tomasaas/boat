@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="no">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Båt</title>
+<style>
+  :root { --bg: #f6f7f9; --card: #fff; --text: #1b1f24; --muted: #6b7280; --line: #e3e6ea;
+          --accent: #2563eb; --fwd: #16a34a; --rev: #dc2626; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111418; --card: #1a1e24; --text: #e8eaed; --muted: #9aa1ab; --line: #2a3038;
+            --accent: #60a5fa; --fwd: #4ade80; --rev: #f87171; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 16px; }
+  header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  h1 { font-size: 20px; margin: 0; }
+  #conn { font-size: 13px; padding: 2px 10px; border-radius: 99px; background: var(--line); }
+  #conn.ok { background: var(--fwd); color: #fff; }
+  #conn.bad { background: var(--rev); color: #fff; }
+  nav { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+  nav button { border: 0; background: none; color: var(--muted); font: inherit; padding: 8px 14px;
+               border-bottom: 2px solid transparent; cursor: pointer; }
+  nav button.active { color: var(--text); border-color: var(--accent); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+  .hint { color: var(--muted); font-size: 13px; text-align: center; }
+  .pad { display: grid; grid-template-columns: repeat(3, 52px); gap: 6px; justify-content: center; margin: 8px 0; }
+  .pad div { height: 52px; border: 1px solid var(--line); border-radius: 8px; display: grid; place-items: center; font-size: 20px; }
+  .pad div.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .motor { display: grid; grid-template-columns: 70px 1fr 90px; align-items: center; gap: 10px; margin: 8px 0; }
+  .bar { position: relative; height: 18px; background: var(--line); border-radius: 4px; overflow: hidden; }
+  .bar::after { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--muted); }
+  .fill { position: absolute; top: 0; bottom: 0; }
+  .num { font-variant-numeric: tabular-nums; text-align: right; font-size: 13px; }
+  label { display: grid; grid-template-columns: 1fr 120px; align-items: center; gap: 8px; margin: 8px 0; }
+  label small { display: block; color: var(--muted); }
+  input { font: inherit; padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); }
+  input[type=checkbox] { justify-self: start; width: 18px; height: 18px; }
+  h2 { font-size: 15px; margin: 0 0 4px; }
+  #save { padding: 10px 18px; font: inherit; color: #fff; background: var(--accent); border: 0; border-radius: 8px; cursor: pointer; }
+  #saved { color: var(--muted); margin-left: 10px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header><h1>Båt</h1><span id="conn">…</span></header>
+  <nav>
+    <button data-tab="control" class="active">Styring</button>
+    <button data-tab="config">Konfigurasjon</button>
+  </nav>
+
+  <section id="control">
+    <div class="card">
+      <div class="pad">
+        <span></span><div id="k-up">↑</div><span></span>
+        <div id="k-left">←</div><div id="k-down">↓</div><div id="k-right">→</div>
+      </div>
+      <p class="hint">Hold piltastene eller WASD. Slipp for å stoppe.</p>
+    </div>
+    <div class="card">
+      <div class="motor"><b>Venstre</b><div class="bar"><div class="fill" id="bar-left"></div></div><span class="num" id="num-left"></span></div>
+      <div class="motor"><b>Høyre</b><div class="bar"><div class="fill" id="bar-right"></div></div><span class="num" id="num-right"></span></div>
+    </div>
+  </section>
+
+  <section id="config" hidden>
+    <form id="form" class="card">
+      <label><span>Fart<small>Throttle når en tast holdes (0–1)</small></span><input name="speed" type="number" min="0" max="1" step="0.05"></label>
+      <label><span>Sving<small>Hvor kraftig båten svinger (0–1)</small></span><input name="turn" type="number" min="0" max="1" step="0.05"></label>
+      <label><span>Motorpoler<small>Antall magneter, for RPM</small></span><input name="poles" type="number" min="2" step="2"></label>
+      <h2>Venstre motor</h2>
+      <label><span>GPIO</span><input name="left.gpio" type="number" min="0" max="27"></label>
+      <label><span>Snu retning</span><input name="left.reverse" type="checkbox"></label>
+      <h2>Høyre motor</h2>
+      <label><span>GPIO</span><input name="right.gpio" type="number" min="0" max="27"></label>
+      <label><span>Snu retning</span><input name="right.reverse" type="checkbox"></label>
+      <button id="save" type="submit">Lagre</button><span id="saved"></span>
+    </form>
+  </section>
+</main>
+
+<script>
+// Arrow keys and WASD both work, at the same time.
+const KEYS = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down',
+               ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right' };
+const held = new Set();
+let tab = 'control';
+
+addEventListener('keydown', e => {
+  if (tab !== 'control' || !(e.code in KEYS)) return;
+  e.preventDefault();
+  held.add(e.code);
+});
+addEventListener('keyup', e => held.delete(e.code));
+addEventListener('blur', () => held.clear());  // window lost focus: release everything
+
+const pressed = dir => [...held].some(code => KEYS[code] === dir) ? 1 : 0;
+
+// Send the key state 10 times per second. The server stops the motors if this stops.
+setInterval(async () => {
+  for (const d of ['up', 'down', 'left', 'right'])
+    document.getElementById('k-' + d).classList.toggle('on', !!pressed(d));
+  const surge = pressed('up') - pressed('down');
+  const yaw = pressed('right') - pressed('left');
+  try {
+    const r = await fetch('/drive', { method: 'POST', body: JSON.stringify({ surge, yaw }) });
+    const s = await r.json();
+    showMotor('left', s.left);
+    showMotor('right', s.right);
+    setConn(s.simulated ? 'Simulering' : 'Tilkoblet', s.simulated ? '' : 'ok');
+  } catch {
+    setConn('Ingen kontakt', 'bad');
+  }
+}, 100);
+
+function showMotor(side, m) {
+  const t = m.throttle, bar = document.getElementById('bar-' + side);
+  bar.style.left = (t >= 0 ? 50 : 50 + t * 50) + '%';
+  bar.style.width = Math.abs(t) * 50 + '%';
+  bar.style.background = t >= 0 ? 'var(--fwd)' : 'var(--rev)';
+  document.getElementById('num-' + side).textContent =
+    Math.round(t * 100) + ' %  ' + (m.rpm === null ? '– rpm' : m.rpm + ' rpm');
+}
+
+function setConn(text, cls) {
+  const el = document.getElementById('conn');
+  el.textContent = text;
+  el.className = cls;
+}
+
+// Tabs
+for (const b of document.querySelectorAll('nav button')) {
+  b.onclick = () => {
+    tab = b.dataset.tab;
+    held.clear();
+    for (const x of document.querySelectorAll('nav button')) x.classList.toggle('active', x === b);
+    for (const s of document.querySelectorAll('main > section')) s.hidden = s.id !== tab;
+    if (tab === 'config') loadConfig();
+  };
+}
+
+// Config form: field names like "left.gpio" map to nested keys.
+const form = document.getElementById('form');
+
+async function loadConfig() {
+  const cfg = await (await fetch('/config')).json();
+  for (const input of form.elements) {
+    if (!input.name) continue;
+    const value = input.name.split('.').reduce((o, k) => o[k], cfg);
+    if (input.type === 'checkbox') input.checked = value; else input.value = value;
+  }
+}
+
+form.onsubmit = async e => {
+  e.preventDefault();
+  const cfg = { left: {}, right: {} };
+  for (const input of form.elements) {
+    if (!input.name) continue;
+    const [a, b] = input.name.split('.');
+    const value = input.type === 'checkbox' ? input.checked : Number(input.value);
+    if (b) cfg[a][b] = value; else cfg[a] = value;
+  }
+  document.getElementById('saved').textContent = 'Lagrer…';
+  await fetch('/config', { method: 'POST', body: JSON.stringify(cfg) });
+  document.getElementById('saved').textContent = 'Lagret, motorene er startet på nytt';
+  loadConfig();
+};
+</script>
+</body>
+</html>

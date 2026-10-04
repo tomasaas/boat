@@ -1,0 +1,13 @@
+{
+  "speed": 0.3,
+  "turn": 0.5,
+  "poles": 14,
+  "left": {
+    "gpio": 18,
+    "reverse": false
+  },
+  "right": {
+    "gpio": 19,
+    "reverse": false
+  }
+}
