@@ -1,0 +1,14 @@
+# systemd service: starts app.py at boot. Installed by `make install` (fills in @USER@ and @DIR@).
+[Unit]
+Description=Boat: DShot thrusters and web GUI on port 8000
+After=network.target
+
+[Service]
+User=@USER@
+WorkingDirectory=@DIR@
+ExecStart=/usr/bin/python3 @DIR@/app.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

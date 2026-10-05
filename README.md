@@ -1,11 +1,12 @@
 # boat
 
-Raspberry Pi 5 styrer to thrustere (AM32-ESC-er) med **bidirectional DShot600** rett fra GPIO. Styringen er differensiell, fra en web-GUI på localhost.
+Raspberry Pi 5 styrer to thrustere (AM32-ESC-er) med **bidirectional DShot600** rett fra GPIO. Styringen er differensiell, fra en web-GUI som Pi-en serverer på ethernet og wifi, og som du åpner i nettleseren på PC-en.
 
 ```
-make              # én gang, på Pi-en: bygger libdshot.so
-python app.py     # start, åpne http://localhost:8000
+make install      # én gang, på Pi-en: bygger libdshot.so og starter appen ved oppstart
 ```
+
+Åpne deretter **http://\<pi-hostname\>.local:8000** i nettleseren på PC-en (f.eks. `http://raspberrypi.local:8000`), eller `http://<ip-til-pi>:8000`. Det virker likt over ethernetkabelen og over wifi, fordi appen lytter på alle nettverkskortene. Adressene står også i loggen: `journalctl -u boat -f`.
 
 - **Styring:** hold piltastene eller WASD (begge virker samtidig). Slipp = stopp.
 - **Konfigurasjon:** fart, svingstyrke, GPIO og retning per motor. Lagres i `config.json`.
@@ -17,11 +18,12 @@ Uten `libdshot.so` (f.eks. på Windows) kjører alt i **simulering**: GUI og log
 | Fil | Hva |
 |---|---|
 | `app.py` | **Start denne.** Webserver, GUI og watchdog. |
+| `boat.service` | systemd-tjenesten som `make install` legger inn. |
 | `index.html` | GUI-en (fanene Styring, Konfigurasjon og Kobling). |
 | `boat.py` | Båten: to motorer og differensialstyring (`mix`). |
 | `dshot.py` | Én ESC: DShot-frames, telemetri og sendetråd. |
 | `dshot_pio.c` | PIO-programmet som lager selve signalet (eneste C-kode). |
-| `Makefile` | Henter Raspberry Pi sitt `piolib` og bygger `libdshot.so`. |
+| `Makefile` | Henter Raspberry Pi sitt `piolib`, bygger `libdshot.so`, og `make install` legger inn tjenesten. |
 | `config.json` | Konfigurasjonen. |
 
 ## Oppsett
@@ -32,12 +34,25 @@ Uten `libdshot.so` (f.eks. på Windows) kjører alt i **simulering**: GUI og log
 
 **AM32 (i AM32-konfiguratoren):** slå på *Bi-Directional* (3D: forover/bakover). Telemetri slås på automatisk, fordi signalet er invertert.
 
-**Over SSH:** `ssh -L 8000:localhost:8000 pi@<ip>`. Åpne deretter http://localhost:8000 på PC-en.
+**Appen som tjeneste (systemd):** `make install` legger inn `boat.service`, som starter `app.py` ved oppstart og på nytt hvis den krasjer. Kjør den som din vanlige bruker, ikke med `sudo` (den spør selv om sudo). Tjenesten kjører som den brukeren og fra denne mappa.
+
+| | |
+|---|---|
+| `journalctl -u boat -f` | Følg loggen. |
+| `sudo systemctl restart boat` | Start på nytt (f.eks. etter `git pull`). |
+| `sudo systemctl stop boat` | Stopp, f.eks. for å kjøre `python app.py --debug` manuelt. |
+| `make uninstall` | Fjern tjenesten. |
+
+**Nettverk:** Appen lytter på port 8000 på alle nettverkskort (ethernet, wifi, IPv4 og IPv6). `<hostname>.local` finnes fordi Raspberry Pi OS kjører avahi (mDNS), og Windows 10/11 forstår `.local`. Bytt navn med `sudo hostnamectl set-hostname boat`, så blir adressen `http://boat.local:8000`.
+
+- *Wifi:* koble Pi-en til samme wifi som PC-en (`sudo nmtui` eller Raspberry Pi Imager). Ingenting annet trengs.
+- *Kabel rett mellom PC og Pi:* det er ingen router som deler ut IP-adresser. Hvis `.local`-adressen ikke svarer, la Pi-en dele ut adresser på kabelen: `sudo nmcli con mod "Wired connection 1" ipv4.method shared && sudo nmcli con up "Wired connection 1"`. Da får Pi-en `10.42.0.1`, og PC-en får en adresse fra Pi-en. Ikke bruk dette hvis Pi-ens ethernet senere kobles til en router; sett det tilbake med `ipv4.method auto`.
 
 **Feilsøking:** `python app.py --debug` logger hver throttle-endring. `–` i RPM-feltet betyr at ESC-en ikke svarer, eller at svaret var korrupt.
 
 ## Sikkerhet
 
+- Alle på samme nettverk som Pi-en kan åpne GUI-en og kjøre båten. Det er ingen innlogging, så bruk et wifi du stoler på.
 - GUI-en sender tastestatus 10 ganger/s. Hvis `app.py` ikke hører noe på 0,5 s, settes begge motorer til 0.
 - Når nettleservinduet mister fokus, slippes alle taster.
 - Hvis `app.py` dør, stopper DShot-signalet, og AM32 stopper motoren av seg selv.
@@ -113,7 +128,7 @@ Hvis en side blir over 1, skaleres begge ned med samme faktor. Deretter ganges b
 | `POST /config` | Lagrer og starter motorene på nytt. |
 | `POST /drive` | `{"surge": -1..1, "yaw": -1..1}` → `Boat.status()`. Må sendes minst hvert 0,5 s. |
 
-`python app.py --host 0.0.0.0 --port 8000 --debug`
+`python app.py --host :: --port 8000 --debug` (standard `--host ::` = alle nettverkskort; `--host 127.0.0.1` = bare Pi-en selv)
 
 ### `dshot_pio.c`
 | | |

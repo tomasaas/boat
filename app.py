@@ -1,4 +1,7 @@
-"""Start the boat:  python app.py   then open http://localhost:8000
+"""Start the boat:  python app.py   then open http://<pi-hostname>.local:8000
+
+Listens on every network interface (ethernet and wifi, IPv4 and IPv6), so the GUI
+can be opened from a PC on the same network. --host 127.0.0.1 for this machine only.
 
 Serves index.html (tabs: Styring / Konfigurasjon / Kobling) and a tiny JSON API:
     GET  /config         current config
@@ -10,6 +13,8 @@ import argparse
 import json
 import logging
 import os
+import socket
+import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -68,6 +73,28 @@ class Handler(BaseHTTPRequestHandler):
         pass  # don't log every request (10/s)
 
 
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def server_bind(self):
+        if self.address_family == socket.AF_INET6:
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)  # IPv4 too
+        super().server_bind()
+
+
+def urls(host, port):
+    """Addresses the GUI can be opened on, for the startup log."""
+    if host not in ("::", "0.0.0.0"):
+        return [f"http://{'localhost' if host == '127.0.0.1' else host}:{port}"]
+    found = [f"http://{socket.gethostname()}.local:{port}"]
+    try:  # Linux: every IPv4 address on every interface
+        out = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=2)
+        found += [f"http://{ip}:{port}" for ip in out.stdout.split() if out.returncode == 0 and ":" not in ip]
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return found
+
+
 def watchdog():
     global last_drive
     while True:
@@ -82,7 +109,7 @@ def watchdog():
 def main():
     global boat
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--host", default="::", help="default: all interfaces")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--debug", action="store_true", help="log every throttle change")
     args = parser.parse_args()
@@ -91,8 +118,9 @@ def main():
 
     boat = Boat(load_config())
     threading.Thread(target=watchdog, daemon=True).start()
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
-    log.info("Open http://%s:%d", "localhost" if args.host == "127.0.0.1" else args.host, args.port)
+    Server.address_family = socket.AF_INET6 if ":" in args.host else socket.AF_INET
+    server = Server((args.host, args.port), Handler)
+    log.info("Open %s", "  or  ".join(urls(args.host, args.port)))
     try:
         server.serve_forever()
     except KeyboardInterrupt:
