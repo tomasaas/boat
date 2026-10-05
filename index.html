@@ -6,10 +6,10 @@
 <title>Båt</title>
 <style>
   :root { --bg: #f6f7f9; --card: #fff; --text: #1b1f24; --muted: #6b7280; --line: #e3e6ea;
-          --accent: #2563eb; --fwd: #16a34a; --rev: #dc2626; }
+          --accent: #2563eb; --fwd: #16a34a; --rev: #dc2626; --left: #2563eb; --right: #d97706; --warn: #fef3c7; }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #111418; --card: #1a1e24; --text: #e8eaed; --muted: #9aa1ab; --line: #2a3038;
-            --accent: #60a5fa; --fwd: #4ade80; --rev: #f87171; }
+            --accent: #60a5fa; --fwd: #4ade80; --rev: #f87171; --left: #60a5fa; --right: #fbbf24; --warn: #422006; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, sans-serif; }
@@ -40,6 +40,28 @@
   h2 { font-size: 15px; margin: 0 0 4px; }
   #save { padding: 10px 18px; font: inherit; color: #fff; background: var(--accent); border: 0; border-radius: 8px; cursor: pointer; }
   #saved { color: var(--muted); margin-left: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td, th { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: normal; font-size: 13px; }
+  .warn { background: var(--warn); border-radius: 6px; padding: 8px 10px; margin-top: 10px; font-size: 14px; }
+  .note { color: var(--muted); font-size: 13px; margin: 4px 0 10px; }
+  .gpio { display: grid; grid-template-columns: 1fr 26px 26px 1fr; gap: 3px 6px; align-items: center; font-size: 12px; }
+  .gpio .l { text-align: right; }
+  .gpio .l, .gpio .r { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .gpio .pin { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 10px;
+               border: 1px solid var(--line); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .gpio .pin.p5 { border-color: var(--rev); }
+  .gpio .pin.p3 { border-color: var(--right); }
+  .gpio .pin.gnd { border-color: var(--text); }
+  .gpio .used { color: var(--text); font-weight: 600; }
+  .gpio .pin.used { color: #fff; border-color: transparent; }
+  .gpio .pin.used.left { background: var(--left); }
+  .gpio .pin.used.right { background: var(--right); }
+  .gpio .pin.used.gnd { background: var(--text); color: var(--bg); }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; vertical-align: -1px; margin-right: 4px; }
+  ul { margin: 0; padding-left: 20px; }
+  li { margin: 4px 0; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -49,6 +71,7 @@
   <nav>
     <button data-tab="control" class="active">Styring</button>
     <button data-tab="config">Konfigurasjon</button>
+    <button data-tab="wiring">Kobling</button>
   </nav>
 
   <section id="control">
@@ -78,6 +101,38 @@
       <label><span>Snu retning</span><input name="right.reverse" type="checkbox"></label>
       <button id="save" type="submit">Lagre</button><span id="saved"></span>
     </form>
+  </section>
+
+  <!-- Built from /config by showWiring(), so it always matches the saved GPIOs. -->
+  <section id="wiring" hidden>
+    <div class="card">
+      <h2>Ledninger fra ESC til Pi</h2>
+      <p class="note">Hentet fra lagret konfigurasjon. Endrer du GPIO under Konfigurasjon, oppdateres denne siden.</p>
+      <table id="wires"></table>
+      <div id="wire-warn"></div>
+    </div>
+    <div class="card">
+      <h2>Stiftlisten (40 pinner)</h2>
+      <p class="note">Sett ovenfra med USB-portene ned: stiftlisten er på høyre kant, og pinne 1 (firkantet loddepunkt) er øverst til venstre.</p>
+      <div id="header" class="gpio"></div>
+      <div class="legend">
+        <span><i style="background: var(--left)"></i>Venstre ESC</span>
+        <span><i style="background: var(--right)"></i>Høyre ESC</span>
+        <span><i style="background: var(--text)"></i>GND i bruk</span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Strøm og motorer</h2>
+      <ul>
+        <li><b>ESC-strøm:</b> de tykke + og − på ESC-en går til batteriet. Pi-en har egen strømforsyning (USB-C, 5 V / 5 A).</li>
+        <li><b>Felles jord er påkrevd:</b> uten GND-ledningen fra ESC til Pi virker ikke signalet.</li>
+        <li><b>Rød 5 V-ledning (BEC)</b> fra ESC-en, hvis den finnes, skal <b>ikke</b> kobles til Pi-en. Isoler den.</li>
+        <li><b>Ingen motstand eller nivåomformer.</b> 3,3 V-signalet er nok, og ESC-en svarer med telemetri på samme ledning.</li>
+        <li><b>Motor:</b> de tre faseledningene går til ESC-en i vilkårlig rekkefølge. Går motoren feil vei, bytt to av dem eller huk av <i>Snu retning</i>.</li>
+        <li><b>Venstre motor</b> er babord, altså venstre når du står bak båten og ser forover.</li>
+        <li>Hold signalledningen kort, og tvinn den gjerne sammen med GND.</li>
+      </ul>
+    </div>
   </section>
 </main>
 
@@ -138,6 +193,7 @@ for (const b of document.querySelectorAll('nav button')) {
     for (const x of document.querySelectorAll('nav button')) x.classList.toggle('active', x === b);
     for (const s of document.querySelectorAll('main > section')) s.hidden = s.id !== tab;
     if (tab === 'config') loadConfig();
+    if (tab === 'wiring') showWiring();
   };
 }
 
@@ -167,6 +223,62 @@ form.onsubmit = async e => {
   document.getElementById('saved').textContent = 'Lagret, motorene er startet på nytt';
   loadConfig();
 };
+
+// Wiring guide. HEADER[i] is physical pin i+1: a number is a GPIO (BCM), a string is power/ground.
+const HEADER = ['3V3', '5V', 2, '5V', 3, 'GND', 4, 14, 'GND', 15, 17, 18, 27, 'GND', 22, 23, '3V3', 24, 10, 'GND',
+                9, 25, 11, 8, 'GND', 7, 0, 1, 5, 'GND', 6, 12, 13, 'GND', 19, 16, 26, 20, 'GND', 21];
+const SIDES = { left: 'Venstre', right: 'Høyre' };
+
+const pinOf = gpio => { const i = HEADER.indexOf(gpio); return i < 0 ? null : i + 1; };
+
+// The GND pin physically closest to `pin` that isn't already taken.
+function nearestGnd(pin, taken) {
+  const pos = p => [Math.ceil(p / 2), p % 2];
+  const [r, c] = pos(pin);
+  const dist = p => { const [r2, c2] = pos(p); return (r - r2) ** 2 + (c - c2) ** 2; };
+  const gnds = HEADER.map((x, i) => i + 1).filter(p => HEADER[p - 1] === 'GND' && !taken.includes(p));
+  return gnds.sort((a, b) => dist(a) - dist(b))[0];
+}
+
+async function showWiring() {
+  const cfg = await (await fetch('/config')).json();
+  const used = {};  // physical pin -> {side, what}
+  const rows = [], warnings = [];
+
+  if (cfg.left.gpio === cfg.right.gpio)
+    warnings.push(`Begge ESC-ene står på GPIO${cfg.left.gpio}. De må ha hver sin pinne.`);
+  for (const side of ['left', 'right']) {
+    const gpio = cfg[side].gpio, pin = pinOf(gpio), name = SIDES[side].toLowerCase();
+    if (pin === null) { warnings.push(`GPIO${gpio} (${name} ESC) finnes ikke på stiftlisten.`); continue; }
+    if (gpio === 0 || gpio === 1) warnings.push(`GPIO${gpio} (${name} ESC) er reservert for HAT-EEPROM. Velg en annen.`);
+    if (gpio === 2 || gpio === 3) warnings.push(`GPIO${gpio} (${name} ESC) har fast pull-up for I2C. Velg helst en annen.`);
+    if (gpio === 14 || gpio === 15) warnings.push(`GPIO${gpio} (${name} ESC) er seriellporten. Slå den av i raspi-config, eller velg en annen.`);
+    const gnd = nearestGnd(pin, Object.keys(used).map(Number));
+    used[pin] = { side, what: 'signal' };
+    used[gnd] = { side, what: 'GND' };
+    rows.push(`<tr><td><b style="color: var(--${side})">${SIDES[side]} ESC</b></td><td>Signal (ofte hvit/gul)</td><td>Pinne ${pin} (GPIO${gpio})</td></tr>`,
+              `<tr><td></td><td>GND (ofte svart/brun)</td><td>Pinne ${gnd} (GND)</td></tr>`,
+              `<tr><td></td><td>Retning</td><td>${cfg[side].reverse ? 'Snudd i programvare' : 'Normal'}</td></tr>`);
+  }
+
+  document.getElementById('wires').innerHTML = '<tr><th>ESC</th><th>Ledning</th><th>Til Pi</th></tr>' + rows.join('');
+  document.getElementById('wire-warn').innerHTML = warnings.map(w => `<div class="warn">⚠ ${w}</div>`).join('');
+
+  // 20 rows: label, odd pin, even pin, label.
+  const cell = (p, cls) => {
+    const x = HEADER[p - 1], u = used[p];
+    if (cls === 'pin') {
+      const kind = { GND: 'gnd', '5V': 'p5', '3V3': 'p3' }[x] || '';
+      const on = u ? ' used ' + (u.what === 'signal' ? u.side : '') : '';
+      return `<div class="pin ${kind}${on}">${p}</div>`;
+    }
+    const name = typeof x === 'number' ? 'GPIO' + x : x;
+    return `<div class="${cls}${u ? ' used' : ''}">${u ? `${name} – ${SIDES[u.side].toLowerCase()} ${u.what}` : name}</div>`;
+  };
+  let html = '';
+  for (let p = 1; p <= 40; p += 2) html += cell(p, 'l') + cell(p, 'pin') + cell(p + 1, 'pin') + cell(p + 1, 'r');
+  document.getElementById('header').innerHTML = html;
+}
 </script>
 </body>
 </html>

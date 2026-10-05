@@ -1,6 +1,6 @@
 """Start the boat:  python app.py   then open http://localhost:8000
 
-Serves index.html (tabs: Konfigurasjon / Styring) and a tiny JSON API:
+Serves index.html (tabs: Styring / Konfigurasjon / Kobling) and a tiny JSON API:
     GET  /config         current config
     POST /config         save config.json and restart the motors
     POST /drive          {"surge": -1..1, "yaw": -1..1} -> status

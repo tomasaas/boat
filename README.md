@@ -17,7 +17,7 @@ Uten `libdshot.so` (f.eks. på Windows) kjører alt i **simulering**: GUI og log
 | Fil | Hva |
 |---|---|
 | `app.py` | **Start denne.** Webserver, GUI og watchdog. |
-| `index.html` | GUI-en (fanene Styring og Konfigurasjon). |
+| `index.html` | GUI-en (fanene Styring, Konfigurasjon og Kobling). |
 | `boat.py` | Båten: to motorer og differensialstyring (`mix`). |
 | `dshot.py` | Én ESC: DShot-frames, telemetri og sendetråd. |
 | `dshot_pio.c` | PIO-programmet som lager selve signalet (eneste C-kode). |
@@ -26,7 +26,7 @@ Uten `libdshot.so` (f.eks. på Windows) kjører alt i **simulering**: GUI og log
 
 ## Oppsett
 
-**Kobling:** ESC-signal → GPIO18 (venstre) og GPIO19 (høyre), og GND på ESC → GND på Pi. 3,3 V-signal er nok.
+**Kobling:** se fanen *Kobling* i GUI-en. Den viser pinnene for GPIO-ene i `config.json`. Standard: ESC-signal → GPIO18 (venstre) og GPIO19 (høyre), og GND på ESC → GND på Pi. 3,3 V-signal er nok.
 
 **Pi 5:** Raspberry Pi OS Bookworm, oppdatert (`sudo apt update && sudo apt full-upgrade`). `ls -l /dev/pio0` må finnes. Hvis eieren er `root root`, legg til `SUBSYSTEM=="*-pio", GROUP="gpio", MODE="0660"` i `/etc/udev/rules.d/99-com.rules` og start på nytt.
 
