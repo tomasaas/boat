@@ -10,7 +10,7 @@ make install      # én gang, på Pi-en: bygger libdshot.so, installerer ffmpeg 
 
 - **Styring:** hold piltastene eller WASD (begge virker samtidig). Slipp = stopp.
 - **Kamera:** øverst på Styring. *Skru av kamera* stopper videoen helt til du skrur den på igjen (huskes etter omstart).
-- **Konfigurasjon:** fart, svingstyrke, GPIO og retning per motor, og kameraets oppløsning, fps og bitrate. Lagres i `config.json`.
+- **Konfigurasjon:** fart, svingstyrke, GPIO og retning per motor, og kameraets oppløsning og fps. Lagres i `config.json`.
 
 Uten `libdshot.so` (f.eks. på Windows) kjører alt i **simulering**: GUI og logikk virker, men ingen signaler sendes.
 
@@ -56,14 +56,14 @@ USB-kameraet kobles i en USB-port på Pi-en. `app.py` finner det selv (`/dev/v4l
 
 Pi 5 har ingen H.264-koder i maskinvare, så `ffmpeg` koder videoen i programvare. Kameraet sender MJPEG i 640×480, 1280×720, 1920×1080 og 2560×1440, med 15 eller 30 bilder/s. Nettleseren spiller H.264-videoen med Media Source Extensions (Chrome, Edge, Firefox). Forsinkelsen er ca. 0,5 s.
 
-**Data over 4G.** Bitraten er et tak, og den bestemmer databruken uansett oppløsning. Høyere oppløsning med samme bitrate gir skarpere bilde når det står stille, men mer grøt når det beveger seg.
+**Data over 4G.** Du velger oppløsning og fps, og bitraten følger av dem (`kbps()` i `camera.py`), så bildet holder seg skarpt uten justering. Bitraten er 450 kbit/s ved 480p 15 fps og vokser med piksler per sekund opphøyd i 0,75, fordi store bilder komprimeres bedre per piksel. Er bildet for grøtete eller for dyrt overalt, endrer du `BASE_KBPS`. Konfigurasjon viser GB per time for valget før du lagrer, og Styring viser hva som faktisk går.
 
 | Innstilling | Bitrate | Data per time |
 |---|---|---|
-| 480p 15 fps (standard) | 400 kbit/s | ~180 MB |
-| 720p 30 fps | 1500 kbit/s | ~675 MB |
-| 1080p 30 fps | 3000 kbit/s | ~1,35 GB |
-| 1440p 15 fps | 5000 kbit/s | ~2,25 GB |
+| 480p 15 fps (standard) | 450 kbit/s | ~0,20 GB |
+| 720p 30 fps | 1725 kbit/s | ~0,78 GB |
+| 1080p 30 fps | 3170 kbit/s | ~1,43 GB |
+| 1440p 15 fps | 2900 kbit/s | ~1,31 GB |
 
 Det går bare video over nettet når den faktisk vises:
 - `ffmpeg` kjører bare når kameraet er på og noen ser på, og stopper 5 s etter at siste seer forsvant.
@@ -155,7 +155,6 @@ Hvis en side blir over 1, skaleres begge ned med samme faktor. Deretter ganges b
 | `camera.on` | `false` = ingen video over nettet. Settes med knappen i GUI-en (`POST /camera`). |
 | `camera.height` | 480, 720, 1080 eller 1440. |
 | `camera.fps` | 1–30, men maks `max_fps(height)` (15 i 1440p). |
-| `camera.kbps` | Bitrate, 100–8000 kbit/s. Bestemmer databruken. |
 | `camera.device` | Tom = første USB-kamera, ellers f.eks. `/dev/video0`. |
 
 `load_config()`, `save_config(cfg)` og `clean_config(cfg)` (fyller inn standardverdier og retter typer).
@@ -167,7 +166,7 @@ Hvis en side blir over 1, skaleres begge ned med samme faktor. Deretter ganges b
 | `GET /config` | Konfigurasjon som JSON. |
 | `POST /config` | Lagrer og starter motorene på nytt. |
 | `POST /drive` | `{"surge": -1..1, "yaw": -1..1}` → `Boat.status()`. Må sendes minst hvert 0,5 s. |
-| `GET /camera` | Kamerastatus: `on`, `running`, `viewers`, `width`, `height`, `fps`, `actual_fps`, `kbps`, `temp`, `degraded` (grunn til nedsatt video), `max_fps`. |
+| `GET /camera` | Kamerastatus: `on`, `running`, `viewers`, `width`, `height`, `fps`, `actual_fps`, `kbps` (bitraten nå), `temp`, `degraded` (grunn til nedsatt video), `max_fps`. |
 | `POST /camera` | `{"on": true/false}`. Lagres i `config.json`. |
 | `GET /video` | Video til nettleseren: H.264 i fragmentert MP4, uendelig. `X-Codec` er codec-strengen til MediaSource. 409 når kameraet er av, 503 uten ffmpeg. |
 

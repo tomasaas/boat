@@ -18,9 +18,9 @@ DEFAULT_CONFIG = {
     "poles": 14,   # motor magnets, used to turn eRPM into RPM
     "left": {"gpio": 18, "reverse": False},
     "right": {"gpio": 19, "reverse": False},
-    # on: off = no video over 4G. height: a key of RESOLUTIONS. kbps caps the data use.
-    # device: "" = the first USB camera.
-    "camera": {"on": True, "height": 480, "fps": 15, "kbps": 400, "device": ""},
+    # on: off = no video over 4G. height: a key of RESOLUTIONS. The bitrate follows from height
+    # and fps (camera.kbps). device: "" = the first USB camera.
+    "camera": {"on": True, "height": 480, "fps": 15, "device": ""},
 }
 
 
@@ -51,7 +51,6 @@ def clean_config(cfg):
         return {"on": bool(c.get("on", d["on"])),
                 "height": height,
                 "fps": max(1, min(max_fps(height), int(c.get("fps", d["fps"])))),
-                "kbps": max(100, min(8000, int(c.get("kbps", d["kbps"])))),
                 "device": str(c.get("device", d["device"])).strip()}
     return {
         "speed": max(0.0, min(1.0, float(cfg.get("speed", DEFAULT_CONFIG["speed"])))),

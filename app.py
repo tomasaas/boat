@@ -19,6 +19,7 @@ import logging
 import os
 import socket
 import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -120,6 +121,10 @@ class Handler(BaseHTTPRequestHandler):
 
 class Server(ThreadingHTTPServer):
     daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        if not isinstance(sys.exc_info()[1], ConnectionError):  # a browser that left mid keep-alive
+            super().handle_error(request, client_address)
 
     def server_bind(self):
         if self.address_family == socket.AF_INET6:

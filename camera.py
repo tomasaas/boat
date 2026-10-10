@@ -10,6 +10,7 @@ ffmpeg runs only while the camera is on and somebody watches, and stops IDLE_STO
 last viewer leaves, so no video crosses 4G unless it is shown. The Pi 5 has no H.264 encoder in
 hardware, so libx264 encodes in software, at the lowest CPU priority: the motors come first.
 - PIXEL_BUDGET caps the fps per resolution (1440p: 15 fps), so the Pi isn't asked for too much.
+- The bitrate follows from resolution and fps (kbps()), so the picture stays sharp without tuning.
 - If too few frames arrive while the CPU is full, the resolution steps down one notch.
 - If the Pi gets hot, the video falls back to 480p until it has cooled down.
 - If ffmpeg dies it is restarted; the motors don't notice, it's a separate process.
@@ -28,6 +29,7 @@ import time
 # Height -> size. All four are MJPEG modes of the camera, which sends 15 or 30 fps.
 RESOLUTIONS = {480: (640, 480), 720: (1280, 720), 1080: (1920, 1080), 1440: (2560, 1440)}
 PIXEL_BUDGET = 1920 * 1080 * 30  # pixels/s the Pi decodes and encodes with CPU to spare
+BASE_KBPS = 450                  # bitrate at 480p 15 fps; the rest scales from this
 IDLE_STOP = 5                    # s without viewers before ffmpeg stops
 WINDOW = 10                      # s between fps measurements
 SLOW = 0.8                       # less than this share of the frames = too slow...
@@ -44,6 +46,13 @@ def max_fps(height):
     w, h = RESOLUTIONS[height]
     fps = PIXEL_BUDGET // (w * h)
     return 30 if fps >= 30 else min(fps, 15)
+
+
+def kbps(height, fps):
+    """Bitrate for a sharp picture. Grows with pixels/s to the power 0.75, since bigger pictures
+    compress better per pixel: 480p 15 fps 450 kbit/s, 1080p 30 fps 3170, 1440p 15 fps 2900."""
+    w, h = RESOLUTIONS[height]
+    return round(BASE_KBPS * (w * h * fps / (640 * 480 * 15)) ** 0.75)
 
 
 def find_device(device=""):
@@ -203,7 +212,7 @@ class Camera:
                 "simulated": find_device(self.config["device"]) is None,
                 "running": self.proc is not None,
                 "viewers": len(self.viewers),
-                "width": w, "height": h, "fps": fps, "kbps": self.config["kbps"],
+                "width": w, "height": h, "fps": fps, "kbps": kbps(height, fps),
                 "actual_fps": None if self.actual_fps is None else round(self.actual_fps, 1),
                 "temp": self.temp,
                 "degraded": degraded,
@@ -227,12 +236,12 @@ class Camera:
                    "-framerate", str(rate), "-i", device]
         else:
             src = ["-re", "-f", "lavfi", "-i", f"testsrc2=size={w}x{h}:rate={rate}"]
-        kbps = f"{self.config['kbps']}k"
+        rate_kbps = f"{kbps(height, fps)}k"
         return ([NICE, "-n", "19"] if NICE else []) + [
             FFMPEG, "-hide_banner", "-loglevel", "error", "-threads", "2", *src,
             *(["-vf", f"fps={fps}"] if fps != rate else []),
             "-an", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-threads", "2",
-            "-pix_fmt", "yuv420p", "-g", str(2 * fps), "-b:v", kbps, "-maxrate", kbps, "-bufsize", kbps,
+            "-pix_fmt", "yuv420p", "-g", str(2 * fps), "-b:v", rate_kbps, "-maxrate", rate_kbps, "-bufsize", rate_kbps,
             "-f", "mp4", "-movflags", "empty_moov+default_base_moof+frag_every_frame", "-"]
 
     def _supervise(self):
@@ -262,7 +271,7 @@ class Camera:
     def _start(self):
         self.args = self.command()
         height, fps = self.mode()
-        log.info("Camera on: %dp %d fps %d kbit/s from %s", height, fps, self.config["kbps"],
+        log.info("Camera on: %dp %d fps %d kbit/s from %s", height, fps, kbps(height, fps),
                  find_device(self.config["device"]) or "test pattern")
         self.started = time.monotonic()
         self.init, self.window, self.frames, self.actual_fps = None, 0.0, 0, None

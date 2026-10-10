@@ -14,7 +14,6 @@
     "on": true,
     "height": 480,
     "fps": 15,
-    "kbps": 400,
     "device": ""
   }
 }

@@ -116,7 +116,7 @@
         <option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option><option value="1440">1440p</option>
       </select></label>
       <label><span>Bilder per sekund<small id="fps-max"></small></span><input name="camera.fps" type="number" min="1" max="30"></label>
-      <label><span>Bitrate, kbit/s<small id="kbps-use"></small></span><input name="camera.kbps" type="number" min="100" max="8000" step="50"></label>
+      <p class="note" id="cam-data"></p>
       <label><span>Enhet<small>Tom = finn USB-kameraet selv</small></span><input name="camera.device" placeholder="auto"></label>
       <button id="save" type="submit">Lagre</button><span id="saved"></span>
     </form>
@@ -231,15 +231,22 @@ async function loadConfig() {
   showLimits();
 }
 
-// The fps limit per resolution (what the Pi's CPU manages), and what the bitrate costs in data.
+// The fps limit per resolution (what the Pi's CPU manages), and what the video costs in data.
 let maxFps = {};
+const SIZES = { 480: [640, 480], 720: [1280, 720], 1080: [1920, 1080], 1440: [2560, 1440] };
+const kbpsFor = (height, fps) => {  // same as kbps() in camera.py
+  const [w, h] = SIZES[height];
+  return 450 * (w * h * fps / (640 * 480 * 15)) ** 0.75;
+};
+const gbPerHour = kbps => (kbps * 0.45 / 1000).toFixed(2) + ' GB per time';
+
 function showLimits() {
-  const max = maxFps[form.elements['camera.height'].value] || 30;
+  const height = form.elements['camera.height'].value, max = maxFps[height] || 30;
+  const fps = Math.min(max, Math.max(1, Number(form.elements['camera.fps'].value) || 1));
   form.elements['camera.fps'].max = max;
   document.getElementById('fps-max').textContent = `Maks ${max} i denne oppløsningen`;
-  const mb = Number(form.elements['camera.kbps'].value) * 0.45;  // kbit/s -> MB per hour
-  document.getElementById('kbps-use').textContent =
-    `≈ ${mb >= 1000 ? (mb / 1000).toFixed(1) + ' GB' : Math.round(mb) + ' MB'} per time`;
+  document.getElementById('cam-data').textContent =
+    `Bitraten følger oppløsning og fps: ${Math.round(kbpsFor(height, fps))} kbit/s, ≈ ${gbPerHour(kbpsFor(height, fps))} over 4G når videoen vises.`;
 }
 form.oninput = showLimits;
 
@@ -360,7 +367,7 @@ function showCam() {
   msg.hidden = cam.on && cam.available && !!playing && video.readyState >= 2;
   const mb = received / 1e6;
   const parts = [`${cam.width}×${cam.height}`, `${cam.actual_fps ?? cam.fps} fps`,
-                 `${Math.round(playing ? kbps : 0)} kbit/s`, `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB denne økten`];
+                 `≈ ${gbPerHour(playing ? kbps : 0)}`, `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB denne økten`];
   if (cam.simulated) parts.unshift('Testbilde');
   if (cam.temp !== null) parts.push(`${Math.round(cam.temp)} °C`);
   document.getElementById('cam-info').textContent = parts.join(' · ');
