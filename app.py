@@ -7,7 +7,11 @@ Serves index.html (tabs: Styring / Konfigurasjon / Kobling) and a tiny JSON API:
     GET  /config         current config
     POST /config         save config.json and restart the motors
     POST /drive          {"surge": -1..1, "yaw": -1..1} -> status
+    GET  /camera         camera status
+    POST /camera         {"on": true/false}: off = no video over 4G until it's turned on again
+    GET  /video          H.264 in fragmented MP4, endless, for MediaSource. 409 when the camera is off
 The GUI posts /drive 10 times/s. If that stops for TIMEOUT seconds, the motors stop.
+Connections are kept alive (HTTP/1.1): over 4G, a new TCP connection for every /drive costs data.
 """
 import argparse
 import json
@@ -20,23 +24,32 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from boat import Boat, clean_config, load_config, save_config
+from camera import Camera, codec_of
 
 TIMEOUT = 0.5
 INDEX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
 log = logging.getLogger("app")
 
 boat = None
+camera = None
 boat_lock = threading.Lock()
 last_drive = 0.0  # time of the last /drive, 0 = stopped by watchdog
 
 
 class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"  # keep-alive
+    timeout = 300  # close idle connections (Caddy closes its own after 2 min)
+
     def do_GET(self):
         if self.path == "/":
             with open(INDEX, "rb") as f:
                 self.reply(f.read(), "text/html; charset=utf-8")
         elif self.path == "/config":
             self.reply_json(boat.config)
+        elif self.path == "/camera":
+            self.reply_json(camera.status())
+        elif self.path == "/video":
+            self.stream_video()
         else:
             self.send_error(404)
 
@@ -48,16 +61,48 @@ class Handler(BaseHTTPRequestHandler):
                 boat.drive(float(body["surge"]), float(body["yaw"]))
                 last_drive = time.monotonic()
                 self.reply_json(boat.status())
+            elif self.path == "/camera":
+                cfg = dict(boat.config, camera=dict(boat.config["camera"], on=bool(body["on"])))
+                save_config(cfg)
+                log.info("Camera %s", "on" if cfg["camera"]["on"] else "off")
+                boat.config = cfg
+                camera.configure(cfg["camera"])
+                self.reply_json(camera.status())
             elif self.path == "/config":
+                body.setdefault("camera", {})["on"] = boat.config["camera"]["on"]  # owned by /camera
                 cfg = clean_config(body)
                 save_config(cfg)
                 log.info("New config: %s", cfg)
                 boat.close()
                 boat = Boat(cfg)
                 last_drive = 0.0
+                camera.configure(cfg["camera"])
                 self.reply_json(cfg)
             else:
                 self.send_error(404)
+
+    def stream_video(self):
+        if not camera.config["on"]:
+            return self.send_error(409, "Camera is off")
+        chunks = camera.subscribe()
+        try:
+            first = next(chunks, None)  # waits for ffmpeg to start
+            if first is None:
+                return self.send_error(503, "No video")
+            self.close_connection = True  # no Content-Length: the stream ends when the connection does
+            self.send_response(200)
+            self.send_header("Content-Type", "video/mp4")
+            self.send_header("X-Codec", codec_of(first))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(first)
+            for chunk in chunks:
+                self.wfile.write(chunk)
+        except OSError:
+            pass  # the browser left, or turned the camera off
+        finally:
+            chunks.close()
 
     def reply_json(self, data):
         self.reply(json.dumps(data).encode(), "application/json")
@@ -107,7 +152,7 @@ def watchdog():
 
 
 def main():
-    global boat
+    global boat, camera
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--host", default="::", help="default: all interfaces")
     parser.add_argument("--port", type=int, default=8000)
@@ -117,6 +162,7 @@ def main():
                         format="%(asctime)s %(name)s %(levelname)s: %(message)s")
 
     boat = Boat(load_config())
+    camera = Camera(boat.config["camera"])
     threading.Thread(target=watchdog, daemon=True).start()
     Server.address_family = socket.AF_INET6 if ":" in args.host else socket.AF_INET
     server = Server((args.host, args.port), Handler)
@@ -126,6 +172,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        camera.close()
         boat.close()
 
 

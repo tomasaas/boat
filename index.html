@@ -35,7 +35,7 @@
   .num { font-variant-numeric: tabular-nums; text-align: right; font-size: 13px; }
   label { display: grid; grid-template-columns: 1fr 120px; align-items: center; gap: 8px; margin: 8px 0; }
   label small { display: block; color: var(--muted); }
-  input { font: inherit; padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); }
+  input, select { font: inherit; padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); }
   input[type=checkbox] { justify-self: start; width: 18px; height: 18px; }
   h2 { font-size: 15px; margin: 0 0 4px; }
   #save { padding: 10px 18px; font: inherit; color: #fff; background: var(--accent); border: 0; border-radius: 8px; cursor: pointer; }
@@ -62,6 +62,13 @@
   .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; vertical-align: -1px; margin-right: 4px; }
   ul { margin: 0; padding-left: 20px; }
   li { margin: 4px 0; }
+  .cam { position: relative; aspect-ratio: 16 / 9; background: #000; border-radius: 6px; overflow: hidden; }
+  .cam video { width: 100%; height: 100%; object-fit: contain; display: block; }
+  #cam-msg { position: absolute; inset: 0; display: grid; place-items: center; color: #9aa1ab; }
+  .cam-bar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 10px; }
+  .cam-bar button { padding: 6px 12px; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line);
+                    border-radius: 6px; cursor: pointer; white-space: nowrap; }
+  #cam-info { color: var(--muted); font-size: 13px; text-align: right; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -75,6 +82,11 @@
   </nav>
 
   <section id="control">
+    <div class="card">
+      <div class="cam"><video id="video" muted autoplay playsinline></video><div id="cam-msg">…</div></div>
+      <div class="cam-bar"><button id="cam-toggle">…</button><span id="cam-info" class="num"></span></div>
+      <div id="cam-warn"></div>
+    </div>
     <div class="card">
       <div class="pad">
         <span></span><div id="k-up">↑</div><span></span>
@@ -99,6 +111,13 @@
       <h2>Høyre motor</h2>
       <label><span>GPIO</span><input name="right.gpio" type="number" min="0" max="27"></label>
       <label><span>Snu retning</span><input name="right.reverse" type="checkbox"></label>
+      <h2>Kamera</h2>
+      <label><span>Oppløsning<small>480p er 640×480, 1440p er QHD (2560×1440)</small></span><select name="camera.height">
+        <option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option><option value="1440">1440p</option>
+      </select></label>
+      <label><span>Bilder per sekund<small id="fps-max"></small></span><input name="camera.fps" type="number" min="1" max="30"></label>
+      <label><span>Bitrate, kbit/s<small id="kbps-use"></small></span><input name="camera.kbps" type="number" min="100" max="8000" step="50"></label>
+      <label><span>Enhet<small>Tom = finn USB-kameraet selv</small></span><input name="camera.device" placeholder="auto"></label>
       <button id="save" type="submit">Lagre</button><span id="saved"></span>
     </form>
   </section>
@@ -192,6 +211,7 @@ for (const b of document.querySelectorAll('nav button')) {
     held.clear();
     for (const x of document.querySelectorAll('nav button')) x.classList.toggle('active', x === b);
     for (const s of document.querySelectorAll('main > section')) s.hidden = s.id !== tab;
+    camTick();
     if (tab === 'config') loadConfig();
     if (tab === 'wiring') showWiring();
   };
@@ -202,27 +222,150 @@ const form = document.getElementById('form');
 
 async function loadConfig() {
   const cfg = await (await fetch('/config')).json();
+  maxFps = (await (await fetch('/camera')).json()).max_fps;
   for (const input of form.elements) {
     if (!input.name) continue;
     const value = input.name.split('.').reduce((o, k) => o[k], cfg);
     if (input.type === 'checkbox') input.checked = value; else input.value = value;
   }
+  showLimits();
 }
+
+// The fps limit per resolution (what the Pi's CPU manages), and what the bitrate costs in data.
+let maxFps = {};
+function showLimits() {
+  const max = maxFps[form.elements['camera.height'].value] || 30;
+  form.elements['camera.fps'].max = max;
+  document.getElementById('fps-max').textContent = `Maks ${max} i denne oppløsningen`;
+  const mb = Number(form.elements['camera.kbps'].value) * 0.45;  // kbit/s -> MB per hour
+  document.getElementById('kbps-use').textContent =
+    `≈ ${mb >= 1000 ? (mb / 1000).toFixed(1) + ' GB' : Math.round(mb) + ' MB'} per time`;
+}
+form.oninput = showLimits;
 
 form.onsubmit = async e => {
   e.preventDefault();
-  const cfg = { left: {}, right: {} };
+  const cfg = { left: {}, right: {}, camera: {} };
   for (const input of form.elements) {
     if (!input.name) continue;
     const [a, b] = input.name.split('.');
-    const value = input.type === 'checkbox' ? input.checked : Number(input.value);
+    const value = input.type === 'checkbox' ? input.checked : input.type === 'text' ? input.value : Number(input.value);
     if (b) cfg[a][b] = value; else cfg[a] = value;
   }
   document.getElementById('saved').textContent = 'Lagrer…';
   await fetch('/config', { method: 'POST', body: JSON.stringify(cfg) });
-  document.getElementById('saved').textContent = 'Lagret, motorene er startet på nytt';
+  document.getElementById('saved').textContent = 'Lagret, motorene og kameraet er startet på nytt';
   loadConfig();
 };
+
+// Camera: H.264 in fragmented MP4 from /video, played through MediaSource. To save 4G data the
+// video only runs while the camera is on and this window is visible and shows Styring.
+const video = document.getElementById('video');
+let cam = null;        // last /camera status
+let playing = null;    // AbortController of the running /video
+let received = 0;      // video bytes this session
+let lastBytes = 0, lastTime = performance.now(), kbps = 0;
+
+async function camTick() {
+  if (document.hidden) return stopVideo();
+  try {
+    cam = await (await fetch('/camera')).json();
+  } catch {
+    return;
+  }
+  if (cam.on && cam.available && tab === 'control' && !document.hidden) startVideo(); else stopVideo();
+  showCam();
+}
+setInterval(camTick, 2000);
+document.addEventListener('visibilitychange', camTick);
+camTick();
+
+async function startVideo() {
+  if (playing) return;
+  const abort = playing = new AbortController();
+  try {
+    const r = await fetch('/video', { signal: abort.signal, cache: 'no-store' });
+    const codec = r.headers.get('X-Codec');
+    if (!r.ok || !codec) throw new Error('HTTP ' + r.status);
+    const ms = new MediaSource();
+    video.src = URL.createObjectURL(ms);
+    await new Promise(ok => ms.addEventListener('sourceopen', ok, { once: true }));
+    const sb = ms.addSourceBuffer(`video/mp4; codecs="${codec}"`);
+    const queue = [];
+    const pump = () => { if (!sb.updating && queue.length) sb.appendBuffer(queue.shift()); };
+    sb.addEventListener('updateend', () => {
+      const b = sb.buffered;  // keep only the last few seconds in memory
+      if (b.length && video.currentTime - b.start(0) > 10) sb.remove(0, video.currentTime - 5);
+      else pump();
+    });
+    const reader = r.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      queue.push(value);
+      pump();
+      catchUp(sb);
+    }
+  } catch (e) {
+    if (playing === abort) console.log('Video:', e.message);
+  } finally {
+    if (playing === abort) { playing = null; clearVideo(); }  // camTick connects again
+  }
+}
+
+// Live: jump to the newest frame when behind (at the start, slow 4G, skipped frames).
+function catchUp(sb) {
+  const b = sb.buffered;
+  if (!b.length) return;
+  const end = b.end(b.length - 1);
+  if (end - video.currentTime > 1) video.currentTime = Math.max(b.start(b.length - 1), end - 0.1);
+  if (video.paused) video.play().catch(() => {});
+}
+
+function stopVideo() {
+  if (!playing) return;
+  playing.abort();
+  playing = null;
+  clearVideo();
+}
+
+function clearVideo() {
+  video.removeAttribute('src');
+  video.load();
+  showCam();
+}
+
+video.addEventListener('playing', showCam);
+video.ondblclick = () => video.requestFullscreen();
+
+document.getElementById('cam-toggle').onclick = async e => {
+  e.target.blur();  // so the space bar doesn't toggle it again
+  const r = await fetch('/camera', { method: 'POST', body: JSON.stringify({ on: !cam.on }) });
+  cam = await r.json();
+  camTick();
+};
+
+function showCam() {
+  if (!cam) return;
+  const now = performance.now();
+  if (now - lastTime >= 1500) {
+    kbps = (received - lastBytes) * 8 / (now - lastTime);
+    lastBytes = received;
+    lastTime = now;
+  }
+  document.getElementById('cam-toggle').textContent = cam.on ? 'Skru av kamera' : 'Skru på kamera';
+  const msg = document.getElementById('cam-msg');
+  msg.textContent = !cam.available ? 'ffmpeg mangler på Pi-en' : !cam.on ? 'Kamera av' : 'Kobler til …';
+  msg.hidden = cam.on && cam.available && !!playing && video.readyState >= 2;
+  const mb = received / 1e6;
+  const parts = [`${cam.width}×${cam.height}`, `${cam.actual_fps ?? cam.fps} fps`,
+                 `${Math.round(playing ? kbps : 0)} kbit/s`, `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB denne økten`];
+  if (cam.simulated) parts.unshift('Testbilde');
+  if (cam.temp !== null) parts.push(`${Math.round(cam.temp)} °C`);
+  document.getElementById('cam-info').textContent = parts.join(' · ');
+  document.getElementById('cam-warn').innerHTML = cam.degraded ? `<div class="warn">⚠ ${cam.degraded}</div>` : '';
+}
 
 // Wiring guide. HEADER[i] is physical pin i+1: a number is a GPIO (BCM), a string is power/ground.
 const HEADER = ['3V3', '5V', 2, '5V', 3, 'GND', 4, 14, 'GND', 15, 17, 18, 27, 'GND', 22, 23, '3V3', 24, 10, 'GND',

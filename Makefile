@@ -1,5 +1,6 @@
 # Builds libdshot.so = dshot_pio.c + Raspberry Pi's piolib. Run on the Pi 5: make
-# make install    also starts app.py at boot (systemd service "boat"). Run as your user, not sudo.
+# make install    also installs ffmpeg (the camera) and starts app.py at boot (systemd service "boat").
+#                 Run as your user, not sudo.
 PIOLIB = third_party/utils/piolib
 
 libdshot.so: dshot_pio.c | $(PIOLIB)
@@ -9,11 +10,14 @@ libdshot.so: dshot_pio.c | $(PIOLIB)
 $(PIOLIB):
 	git clone --depth 1 https://github.com/raspberrypi/utils third_party/utils
 
-install: libdshot.so
+install: libdshot.so | /usr/bin/ffmpeg
 	sed -e "s|@USER@|$$(id -un)|" -e "s|@DIR@|$(CURDIR)|g" boat.service | sudo tee /etc/systemd/system/boat.service >/dev/null
 	sudo systemctl daemon-reload
 	sudo systemctl enable boat
 	sudo systemctl restart boat
+
+/usr/bin/ffmpeg:
+	sudo apt-get install -y ffmpeg
 
 uninstall:
 	-sudo systemctl disable --now boat

@@ -8,6 +8,7 @@
 import json
 import os
 
+from camera import RESOLUTIONS, max_fps
 from dshot import SIMULATED, Esc
 
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
@@ -17,6 +18,9 @@ DEFAULT_CONFIG = {
     "poles": 14,   # motor magnets, used to turn eRPM into RPM
     "left": {"gpio": 18, "reverse": False},
     "right": {"gpio": 19, "reverse": False},
+    # on: off = no video over 4G. height: a key of RESOLUTIONS. kbps caps the data use.
+    # device: "" = the first USB camera.
+    "camera": {"on": True, "height": 480, "fps": 15, "kbps": 400, "device": ""},
 }
 
 
@@ -38,12 +42,24 @@ def clean_config(cfg):
         s = cfg.get(name, {})
         return {"gpio": int(s.get("gpio", DEFAULT_CONFIG[name]["gpio"])),
                 "reverse": bool(s.get("reverse", False))}
+
+    def camera():
+        c, d = cfg.get("camera", {}), DEFAULT_CONFIG["camera"]
+        height = int(c.get("height", d["height"]))
+        if height not in RESOLUTIONS:
+            height = d["height"]
+        return {"on": bool(c.get("on", d["on"])),
+                "height": height,
+                "fps": max(1, min(max_fps(height), int(c.get("fps", d["fps"])))),
+                "kbps": max(100, min(8000, int(c.get("kbps", d["kbps"])))),
+                "device": str(c.get("device", d["device"])).strip()}
     return {
         "speed": max(0.0, min(1.0, float(cfg.get("speed", DEFAULT_CONFIG["speed"])))),
         "turn": max(0.0, min(1.0, float(cfg.get("turn", DEFAULT_CONFIG["turn"])))),
         "poles": max(2, int(cfg.get("poles", DEFAULT_CONFIG["poles"]))),
         "left": side("left"),
         "right": side("right"),
+        "camera": camera(),
     }
 
 

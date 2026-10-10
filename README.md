@@ -1,15 +1,16 @@
 # boat
 
-Raspberry Pi 5 styrer to thrustere (AM32-ESC-er) med **bidirectional DShot600** rett fra GPIO. Styringen er differensiell, fra en web-GUI som Pi-en serverer på ethernet og wifi, og som du åpner i nettleseren på PC-en.
+Raspberry Pi 5 styrer to thrustere (AM32-ESC-er) med **bidirectional DShot600** rett fra GPIO. Styringen er differensiell, fra en web-GUI som Pi-en serverer på ethernet og wifi, og som du åpner i nettleseren på PC-en. Et USB-kamera vises live i GUI-en.
 
 ```
-make install      # én gang, på Pi-en: bygger libdshot.so og starter appen ved oppstart
+make install      # én gang, på Pi-en: bygger libdshot.so, installerer ffmpeg og starter appen ved oppstart
 ```
 
 Åpne deretter **http://\<pi-hostname\>.local:8000** i nettleseren på PC-en (f.eks. `http://raspberrypi.local:8000`), eller `http://<ip-til-pi>:8000`. Det virker likt over ethernetkabelen og over wifi, fordi appen lytter på alle nettverkskortene. Adressene står også i loggen: `journalctl -u boat -f`.
 
 - **Styring:** hold piltastene eller WASD (begge virker samtidig). Slipp = stopp.
-- **Konfigurasjon:** fart, svingstyrke, GPIO og retning per motor. Lagres i `config.json`.
+- **Kamera:** øverst på Styring. *Skru av kamera* stopper videoen helt til du skrur den på igjen (huskes etter omstart).
+- **Konfigurasjon:** fart, svingstyrke, GPIO og retning per motor, og kameraets oppløsning, fps og bitrate. Lagres i `config.json`.
 
 Uten `libdshot.so` (f.eks. på Windows) kjører alt i **simulering**: GUI og logikk virker, men ingen signaler sendes.
 
@@ -21,6 +22,7 @@ Uten `libdshot.so` (f.eks. på Windows) kjører alt i **simulering**: GUI og log
 | `boat.service` | systemd-tjenesten som `make install` legger inn. |
 | `index.html` | GUI-en (fanene Styring, Konfigurasjon og Kobling). |
 | `boat.py` | Båten: to motorer og differensialstyring (`mix`). |
+| `camera.py` | Kameraet: ffmpeg, H.264-video til alle som ser på, og vaktene for CPU og temperatur. |
 | `dshot.py` | Én ESC: DShot-frames, telemetri og sendetråd. |
 | `dshot_pio.c` | PIO-programmet som lager selve signalet (eneste C-kode). |
 | `Makefile` | Henter Raspberry Pi sitt `piolib`, bygger `libdshot.so`, og `make install` legger inn tjenesten. |
@@ -48,7 +50,39 @@ Uten `libdshot.so` (f.eks. på Windows) kjører alt i **simulering**: GUI og log
 - *Wifi:* koble Pi-en til samme wifi som PC-en (`sudo nmtui` eller Raspberry Pi Imager). Ingenting annet trengs.
 - *Kabel rett mellom PC og Pi:* det er ingen router som deler ut IP-adresser. Hvis `.local`-adressen ikke svarer, la Pi-en dele ut adresser på kabelen: `sudo nmcli con mod "Wired connection 1" ipv4.method shared && sudo nmcli con up "Wired connection 1"`. Da får Pi-en `10.42.0.1`, og PC-en får en adresse fra Pi-en. Ikke bruk dette hvis Pi-ens ethernet senere kobles til en router; sett det tilbake med `ipv4.method auto`.
 
-**Feilsøking:** `python app.py --debug` logger hver throttle-endring. `–` i RPM-feltet betyr at ESC-en ikke svarer, eller at svaret var korrupt.
+## Kamera
+
+USB-kameraet kobles i en USB-port på Pi-en. `app.py` finner det selv (`/dev/v4l/by-id/…`), eller sett *Enhet* under Konfigurasjon, f.eks. `/dev/video0`. Brukeren må være i gruppa `video` (sjekk med `groups`; standardbrukeren er det).
+
+Pi 5 har ingen H.264-koder i maskinvare, så `ffmpeg` koder videoen i programvare. Kameraet sender MJPEG i 640×480, 1280×720, 1920×1080 og 2560×1440, med 15 eller 30 bilder/s. Nettleseren spiller H.264-videoen med Media Source Extensions (Chrome, Edge, Firefox). Forsinkelsen er ca. 0,5 s.
+
+**Data over 4G.** Bitraten er et tak, og den bestemmer databruken uansett oppløsning. Høyere oppløsning med samme bitrate gir skarpere bilde når det står stille, men mer grøt når det beveger seg.
+
+| Innstilling | Bitrate | Data per time |
+|---|---|---|
+| 480p 15 fps (standard) | 400 kbit/s | ~180 MB |
+| 720p 30 fps | 1500 kbit/s | ~675 MB |
+| 1080p 30 fps | 3000 kbit/s | ~1,35 GB |
+| 1440p 15 fps | 5000 kbit/s | ~2,25 GB |
+
+Det går bare video over nettet når den faktisk vises:
+- `ffmpeg` kjører bare når kameraet er på og noen ser på, og stopper 5 s etter at siste seer forsvant.
+- Nettleseren stopper videoen når vinduet er minimert eller fanen ikke vises, og når du er på Konfigurasjon eller Kobling.
+- *Skru av kamera* stopper den for alle, også andre PC-er.
+- GUI-en viser kbit/s og MB brukt i denne økten.
+
+**Motorene går foran videoen.**
+- `ffmpeg` kjører med lavest prioritet (`nice 19`) og maks to tråder per ledd. Styringen får alltid CPU.
+- Krasjer `ffmpeg`, startes den på nytt etter 2 s. Motorene merker ingenting, fordi den er en egen prosess.
+- **Fps-grense per oppløsning:** `PIXEL_BUDGET` i `camera.py` (1920×1080×30 piksler/s) gir maks 15 fps i 1440p og 30 fps ellers. Velger du mer, lagres grensen.
+- **Får Pi-en ikke med seg alle bildene og CPU-en er full**, settes oppløsningen ned ett hakk, og GUI-en sier fra. Er CPU-en ikke full, er det kameraet som sender for få bilder (ofte i lite lys), og da vises bare en melding.
+- **Over 80 °C** faller videoen tilbake til 480p til Pi-en er under 70 °C. Pi 5 struper selv fra 85 °C. Bruk aktiv kjøler hvis Pi-en sitter i en lukket boks.
+
+**Feilsøking:** `ls /dev/v4l/by-id` viser kameraet. `v4l2-ctl --list-formats-ext` (pakken `v4l-utils`) viser modusene. Uten kamera viser GUI-en ffmpegs testbilde («Testbilde»), og uten `ffmpeg` står det «ffmpeg mangler på Pi-en». Fps, temperatur og advarsler står også i `journalctl -u boat -f`.
+
+## Feilsøking
+
+`python app.py --debug` logger hver throttle-endring. `–` i RPM-feltet betyr at ESC-en ikke svarer, eller at svaret var korrupt.
 
 ## Sikkerhet
 
@@ -56,6 +90,7 @@ Uten `libdshot.so` (f.eks. på Windows) kjører alt i **simulering**: GUI og log
 - GUI-en sender tastestatus 10 ganger/s. Hvis `app.py` ikke hører noe på 0,5 s, settes begge motorer til 0.
 - Når nettleservinduet mister fokus, slippes alle taster.
 - Hvis `app.py` dør, stopper DShot-signalet, og AM32 stopper motoren av seg selv.
+- Forbindelsene holdes åpne (HTTP/1.1 keep-alive), så de 10 `/drive` i sekundet ikke åpner en ny TCP-forbindelse hver over 4G.
 
 ## API-referanse
 
@@ -117,6 +152,11 @@ Hvis en side blir over 1, skaleres begge ned med samme faktor. Deretter ganges b
 | `poles` | Antall magneter i motoren (for RPM). |
 | `left.gpio`, `right.gpio` | GPIO-pinne for hver ESC. |
 | `left.reverse`, `right.reverse` | Snu en motor som går feil vei. |
+| `camera.on` | `false` = ingen video over nettet. Settes med knappen i GUI-en (`POST /camera`). |
+| `camera.height` | 480, 720, 1080 eller 1440. |
+| `camera.fps` | 1–30, men maks `max_fps(height)` (15 i 1440p). |
+| `camera.kbps` | Bitrate, 100–8000 kbit/s. Bestemmer databruken. |
+| `camera.device` | Tom = første USB-kamera, ellers f.eks. `/dev/video0`. |
 
 `load_config()`, `save_config(cfg)` og `clean_config(cfg)` (fyller inn standardverdier og retter typer).
 
@@ -127,6 +167,9 @@ Hvis en side blir over 1, skaleres begge ned med samme faktor. Deretter ganges b
 | `GET /config` | Konfigurasjon som JSON. |
 | `POST /config` | Lagrer og starter motorene på nytt. |
 | `POST /drive` | `{"surge": -1..1, "yaw": -1..1}` → `Boat.status()`. Må sendes minst hvert 0,5 s. |
+| `GET /camera` | Kamerastatus: `on`, `running`, `viewers`, `width`, `height`, `fps`, `actual_fps`, `kbps`, `temp`, `degraded` (grunn til nedsatt video), `max_fps`. |
+| `POST /camera` | `{"on": true/false}`. Lagres i `config.json`. |
+| `GET /video` | Video til nettleseren: H.264 i fragmentert MP4, uendelig. `X-Codec` er codec-strengen til MediaSource. 409 når kameraet er av, 503 uten ffmpeg. |
 
 `python app.py --host :: --port 8000 --debug` (standard `--host ::` = alle nettverkskort; `--host 127.0.0.1` = bare Pi-en selv)
 
